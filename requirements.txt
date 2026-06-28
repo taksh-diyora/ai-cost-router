@@ -1,0 +1,7 @@
+groq
+google-genai
+anthropic
+fastapi
+uvicorn
+python-dotenv
+tiktoken

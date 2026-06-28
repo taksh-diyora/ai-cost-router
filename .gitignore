@@ -1,0 +1,64 @@
+# =============================================================
+# Agentic AI Cost Router — .gitignore
+# =============================================================
+
+# ── Environment & Secrets ────────────────────────────────────
+.env
+*.env.local
+*.env.production
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual Environments ─────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Distribution / Build ─────────────────────────────────────
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# ── Testing ──────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.coveragerc
+
+# ── Type Checking & Linting ──────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# ── Database ─────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Benchmark Outputs ────────────────────────────────────────
+benchmarks/results.json
+
+# ── IDE / Editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Jupyter (if used for exploration) ───────────────────────
+.ipynb_checkpoints/
+*.ipynb
