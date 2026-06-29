@@ -60,12 +60,13 @@ The task has been classified as {complexity.value.upper()} complexity.
 ## Rules — follow these strictly:
 
 1. PRESERVE the original intent exactly. Never add features the user did not ask for. Never remove features they did ask for.
-2. Add specificity: if the user did not mention a programming language, framework, or database, make a reasonable assumption and STATE it explicitly (e.g. "Using Python with Flask and SQLite").
+2. Do NOT assume or add specific technologies, frameworks, languages, or databases unless the user explicitly mentioned them. Technology choices will be made later by a planner. Your job is only to clarify WHAT the user wants, not HOW to build it.
 3. Break vague requirements into concrete, measurable steps.
 4. Remove all ambiguity — every sentence should have one clear interpretation.
 5. Structure the output logically: context first, then requirements, then constraints.
-6. If the task involves code, specify expected input/output formats, edge cases, and error handling.
-7. Do NOT add preamble, explanations, or commentary. Return ONLY the optimized prompt text."""
+6. If the task involves code and the user specified a language, clarify expected input/output formats, edge cases, and error handling. If no language was specified, describe the behavior WITHOUT picking one.
+7. Do NOT add preamble, explanations, or commentary. Return ONLY the optimized prompt text.
+8. Do NOT add testing, documentation, deployment, or CI/CD requirements unless the user explicitly asked for them."""
 
     # ── Add re-optimization feedback if present ──────────────
     feedback_section = ""
