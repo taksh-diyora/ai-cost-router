@@ -14,6 +14,7 @@ from src.config.models import ModelRole, ModelConfig, get_model
 from src.providers.groq_provider import call_groq
 from src.providers.gemini_provider import call_gemini
 from src.providers.anthropic_provider import call_anthropic
+from src.benchmark.logger import log_llm_call
 
 
 # ── Provider dispatch table ─────────────────────────────────
@@ -28,6 +29,8 @@ def call_llm(
     role: ModelRole,
     messages: list[dict],
     temperature: float = 0.7,
+    request_id: str | None = None,
+    step_name: str | None = None,
 ) -> dict:
     """Route an LLM request to the correct provider based on reasoning role.
 
@@ -39,6 +42,8 @@ def call_llm(
         role:        The reasoning tier required (LOW, MEDIUM, or HIGH).
         messages:    OpenAI-style list of {"role": ..., "content": ...} dicts.
         temperature: Sampling temperature passed through to the provider.
+        request_id:  Optional UUID to link the call to a specific user request.
+        step_name:   Optional step identifier for benchmark logging.
 
     Returns:
         A dict with keys:
@@ -63,8 +68,21 @@ def call_llm(
         )
 
     # ── Delegate to the provider ─────────────────────────────
-    return provider_fn(
+    result = provider_fn(
         model_id=config.model_id,
         messages=messages,
         temperature=temperature,
     )
+
+    # ── Automatically log if tracking info is provided ───────
+    if request_id and step_name:
+        log_llm_call(
+            request_id=request_id,
+            step_name=step_name,
+            provider=config.provider,
+            model_id=config.model_id,
+            input_tokens=result.get("input_tokens", 0),
+            output_tokens=result.get("output_tokens", 0),
+        )
+
+    return result

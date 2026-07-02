@@ -39,6 +39,7 @@ CONFIDENCE_THRESHOLD: float = 85.0
 def run_optimization_loop(
     user_prompt: str,
     complexity: ComplexityLevel,
+    request_id: str | None = None,
 ) -> dict:
     """Run the optimize-evaluate feedback loop until confidence is reached.
 
@@ -51,6 +52,7 @@ def run_optimization_loop(
     Args:
         user_prompt: The user's original prompt (never mutated).
         complexity:  The classified complexity level of the task.
+        request_id:  Optional request ID for logging.
 
     Returns:
         A dict with keys:
@@ -70,7 +72,14 @@ def run_optimization_loop(
     final_optimized: str = user_prompt
     final_score: float = 0.0
 
+    true_user_prompt = user_prompt
+
     for iteration in range(1, MAX_ITERATIONS + 1):
+        assert user_prompt == true_user_prompt, "Original prompt was mutated!"
+        
+        # Print the first 80 chars as requested
+        print(f"  [Debug] Iteration {iteration} — Original (first 80 chars): {user_prompt[:80]!r}")
+        
         print(f"\n  --- Iteration {iteration}/{MAX_ITERATIONS} ---")
 
         # ── Layer 1: Optimize ────────────────────────────────
@@ -81,9 +90,16 @@ def run_optimization_loop(
             missing_tasks=missing_tasks,
             extra_tasks=extra_tasks,
             iteration=iteration,
+            request_id=request_id,
         )
 
         optimized_prompt = opt_result["optimized_prompt"]
+
+        if optimized_prompt.strip() == "[BYPASS_OPTIMIZATION]":
+            print("  [Optimizer] Prompt is already clear. Bypassing optimization to save tokens.")
+            final_optimized = user_prompt
+            final_score = 100.0
+            break
 
         # ── Layer 2: Evaluate ────────────────────────────────
         print(f"  [Layer 2] Evaluating confidence...")
@@ -92,6 +108,7 @@ def run_optimization_loop(
             optimized_prompt=optimized_prompt,
             task_type=task_type,
             threshold=CONFIDENCE_THRESHOLD,
+            request_id=request_id,
         )
 
         confidence_score = eval_result["confidence_score"]

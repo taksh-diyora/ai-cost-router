@@ -42,35 +42,36 @@ def _build_opus_system_prompt(task_type: TaskType) -> str:
     # ── Task-type-specific instructions ──────────────────────
     task_instructions = {
         TaskType.CODE: """
-## Code-Specific Requirements:
-- Specify exact file names and directory structure
-- Write complete function signatures with parameter types and return types
-- Define all data structures (classes, dicts, schemas) with field names and types
-- For each function: state its purpose, inputs, outputs, and error cases
-- Specify the error handling approach (try/except, custom exceptions, error codes)
-- List all edge cases that must be handled
-- Define expected input/output formats with concrete examples""",
+## CODE-SPECIFIC REQUIREMENTS:
+Every code step must specify:
+- The exact function/class/module name
+- All parameter names and their types
+- The return type and return value structure
+- Every error condition and how it is handled (exception type, error message)
+- Edge cases and how each is handled
+- Any imports required for that step
+Do NOT say "write appropriate tests" unless testing was explicitly requested.
+Do NOT pick a technology, framework, or library unless the user specified it.""",
 
         TaskType.WRITING: """
-## Writing-Specific Requirements:
-- Provide a detailed outline with section headers
-- Specify approximate word count for each section
-- Define the tone (formal, casual, technical, persuasive) for each section
-- List the key points that MUST appear in each paragraph
-- Specify the target audience and reading level
-- Include transition guidance between sections""",
+## WRITING-SPECIFIC REQUIREMENTS:
+Every writing step must specify:
+- The exact section title
+- Target word count range (e.g., 150-200 words)
+- The 3-5 key points that MUST appear in this section
+- The tone (formal/conversational/persuasive/etc.)
+- Transition instruction: how this section connects to the next""",
 
         TaskType.REASONING: """
-## Reasoning-Specific Requirements:
-- Break down each logical step explicitly
-- Specify what evidence or data to reference at each step
-- Define the reasoning method (deductive, inductive, comparative, causal)
-- State what conclusions should be drawn at each checkpoint
-- Identify potential counterarguments and how to address them
-- Specify how to structure the final conclusion""",
+## REASONING-SPECIFIC REQUIREMENTS:
+Every reasoning step must specify:
+- The exact logical claim or sub-conclusion to reach in this step
+- The specific evidence or premises to use
+- The logical operation being performed (induction, deduction, analogy, etc.)
+- What the next step will receive as input from this step""",
 
         TaskType.GENERAL: """
-## General Task Requirements:
+## GENERAL REQUIREMENTS:
 - Break the task into clear, actionable steps
 - Specify what inputs each step requires and what it produces
 - Define quality criteria for each step's output
@@ -79,26 +80,57 @@ def _build_opus_system_prompt(task_type: TaskType) -> str:
 
     specific_instructions = task_instructions.get(task_type, task_instructions[TaskType.GENERAL])
 
-    return f"""You are an elite planning agent. Your job is to generate an implementation plan SO detailed and precise that a junior developer (or a cheap, less capable AI model) can execute it with ZERO additional thinking or decision-making.
+    return f"""You are an elite implementation planner. Your output will be executed by a
+less capable model that has NO ability to make decisions, resolve ambiguity,
+or fill in gaps. If your plan has any gap, the executor will fail silently
+and produce wrong output. Your plan MUST be complete enough that execution
+requires zero intelligence — only mechanical execution of explicit instructions.
 
-## Core Principles:
-1. Every step must be NUMBERED and self-contained
-2. Each step must specify EXACTLY what to do, what inputs it takes, and what outputs it produces
-3. Leave NOTHING to interpretation -- if any step is unclear, your plan has FAILED
-4. Do not skip "obvious" steps -- spell out everything explicitly
-5. Use concrete examples, not abstract descriptions
+## THE ATOMIC STEP TEST — apply to every step before finalizing:
+"Could a developer who has NEVER seen the original prompt execute this step
+correctly, using ONLY the text in this step plus the outputs of previous steps?"
+If the answer is NO for any step → rewrite that step until the answer is YES.
+
+## MANDATORY STRUCTURE — your output must follow this EXACTLY:
+
+### OVERVIEW
+One paragraph. State: what the task is, what the final deliverable is,
+and what the key constraints are. No vague language.
+
+### STEPS
+Numbered steps starting from 1. Each step must contain:
+  - ACTION: The exact action to take (verb first, be imperative)
+  - INPUT: What this step takes as input (output of step N, or user-provided data)
+  - OUTPUT: What this step produces (be specific about format, structure, content)
+  - DETAIL: All implementation specifics needed. For code: function signatures,
+    data types, error handling approach, edge cases, exact variable names if
+    important. For writing: exact section, word count range, key points to cover,
+    tone. For reasoning: exact logical steps, what evidence to reference.
+  - DONE WHEN: The specific condition that means this step is complete.
+
+## FORBIDDEN IN YOUR PLAN:
+- "Handle errors appropriately" → FORBIDDEN. Specify EXACTLY what errors and
+  how to handle each one.
+- "Use best practices" → FORBIDDEN. State the specific practice.
+- "As needed" / "if applicable" / "where appropriate" → ALL FORBIDDEN.
+  Every decision must be made by you, not left for the executor.
+- "Similar to step N" → FORBIDDEN. Every step must be fully self-contained.
+- Any assumption that the executor knows anything about the domain beyond
+  what you explicitly state.
+
 {specific_instructions}
 
-## Output Format:
-Structure your plan as:
-1. **Overview**: One paragraph summarizing the entire task
-2. **Steps**: Numbered steps (1, 2, 3...) with full detail
-3. **Deliverables Checklist**: A bullet-point list of every artifact that must be produced
+### DELIVERABLES CHECKLIST
+A bullet list of every artifact the executor must produce. Each item must be
+specific enough that the executor can check it off with certainty.
+BAD: "• Working code"
+GOOD: "• Python function `reverse_string(s: str) -> str` that handles empty
+       string, None input, and Unicode characters"
 
 Return ONLY the plan. No preamble, no commentary."""
 
 
-def generate_opus_plan(prompt: str, task_type: TaskType) -> dict:
+def generate_opus_plan(prompt: str, task_type: TaskType, request_id: str | None = None) -> dict:
     """Generate an extremely detailed implementation plan.
 
     Uses the HIGH_REASONING model to produce a plan with enough
@@ -107,6 +139,7 @@ def generate_opus_plan(prompt: str, task_type: TaskType) -> dict:
     Args:
         prompt:    The optimized (or original) prompt to plan for.
         task_type: The detected task type (CODE, WRITING, etc.).
+        request_id: Optional request ID for logging.
 
     Returns:
         A dict with keys:
@@ -127,7 +160,9 @@ def generate_opus_plan(prompt: str, task_type: TaskType) -> dict:
         result = call_llm(
             role=ModelRole.HIGH_REASONING,
             messages=messages,
-            temperature=0.3,  # low temp for precise, structured output
+            temperature=0.2,
+            request_id=request_id,
+            step_name="opus_planner",
         )
 
         plan_text = result["content"].strip()

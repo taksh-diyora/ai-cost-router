@@ -151,20 +151,46 @@ def rule_based_classify(user_prompt: str) -> ComplexityLevel | None:
 
 
 # ── LLM system prompt for classification ─────────────────────
-_CLASSIFY_SYSTEM_PROMPT: str = """You are a task complexity classifier. Given a task description, classify it as exactly one of: LOW, MEDIUM, or HIGH.
+_CLASSIFY_SYSTEM_PROMPT: str = """You are a task complexity classifier. Classify the given task as LOW, MEDIUM,
+or HIGH based strictly on the definitions below.
 
-Definitions:
-- LOW: Simple questions, lookups, short translations, basic explanations, trivial code snippets. Can be handled by any model.
-- MEDIUM: Moderate tasks like writing functions, summarizing documents, fixing bugs with context, multi-step reasoning. Needs a decent model.
-- HIGH: Complex tasks like system design, multi-file implementation, architecture decisions, large refactors, building full features. Needs the best model.
+## DEFINITIONS:
 
-Rules:
+LOW — All of the following must be true:
+  - Can be answered or completed in a single focused response
+  - Requires no multi-step planning or decomposition
+  - Involves no system design, architecture decisions, or integration work
+  - Examples: answering a factual question, writing a short function (<30 lines),
+    translating a sentence, explaining a concept, fixing a single obvious bug,
+    writing a regex, generating a SQL query for one table
+
+MEDIUM — The task requires some planning but is clearly scoped:
+  - Needs multiple steps but the steps are predictable
+  - Involves writing real working code with multiple functions or a small module
+  - Requires understanding context but no open-ended design decisions
+  - Examples: building a CRUD endpoint, writing a class with 5-8 methods,
+    debugging a multi-file issue, writing a multi-section document,
+    implementing a known algorithm with edge cases
+
+HIGH — The task requires significant planning and design thinking:
+  - Requires architectural decisions that affect the whole system
+  - Involves multiple interconnected components or files
+  - Cannot be completed without making non-obvious design choices
+  - Examples: designing a full authentication system, building a microservice
+    from scratch, refactoring an entire codebase, implementing a full feature
+    end-to-end across frontend and backend, system design for scale
+
+## RULES:
 1. Respond with ONLY one word: LOW, MEDIUM, or HIGH
-2. No explanation, no punctuation, no extra text
-3. Just the single word"""
+2. No explanation. No punctuation. No extra text. Just the single word.
+3. When in doubt between two adjacent levels, choose the LOWER one.
+   Over-classification wastes expensive models. Under-classification is cheaper
+   to fix than over-classification.
+4. Judge based on the task itself, not the length of the prompt describing it.
+   A long prompt about a simple task is still LOW."""
 
 
-def llm_classify(user_prompt: str) -> ComplexityLevel:
+def llm_classify(user_prompt: str, request_id: str | None = None) -> ComplexityLevel:
     """Classify complexity by asking a MEDIUM_REASONING model.
 
     This is the fallback path — only called when rule_based_classify
@@ -187,7 +213,9 @@ def llm_classify(user_prompt: str) -> ComplexityLevel:
         result = call_llm(
             role=ModelRole.MEDIUM_REASONING,
             messages=messages,
-            temperature=0.1,  # near-deterministic for classification
+            temperature=0.0,
+            request_id=request_id,
+            step_name="classifier",
         )
 
         # ── Parse the response ───────────────────────────────
@@ -213,7 +241,7 @@ def llm_classify(user_prompt: str) -> ComplexityLevel:
         return ComplexityLevel.MEDIUM
 
 
-def classify(user_prompt: str) -> dict:
+def hybrid_classify(user_prompt: str, request_id: str | None = None) -> dict:
     """Classify a user prompt's complexity using the hybrid approach.
 
     Main entry point for the classifier. Tries rule-based first
@@ -221,6 +249,7 @@ def classify(user_prompt: str) -> dict:
 
     Args:
         user_prompt: The user's raw prompt text.
+        request_id: Optional ID for tracking.
 
     Returns:
         A dict with keys:
@@ -240,8 +269,8 @@ def classify(user_prompt: str) -> dict:
             "token_count": token_count,
         }
 
-    # ── Fall back to LLM (only for ambiguous cases) ──────────
-    llm_result = llm_classify(user_prompt)
+    # ── Fallback 2: LLM Classification ───────────────────────
+    llm_result = llm_classify(user_prompt, request_id=request_id)
 
     return {
         "complexity": llm_result,

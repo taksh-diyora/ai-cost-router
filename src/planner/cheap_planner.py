@@ -40,28 +40,39 @@ def _build_cheap_system_prompt(task_type: TaskType) -> str:
         The complete system prompt string.
     """
     task_hint = {
-        TaskType.CODE: "This is a coding task. Include file structure, key functions, and technologies to use.",
-        TaskType.WRITING: "This is a writing task. Include an outline, key points, and tone guidance.",
-        TaskType.REASONING: "This is a reasoning task. Include logical steps and evidence to reference.",
-        TaskType.GENERAL: "Break this into clear, actionable steps.",
+        TaskType.CODE: "(CODE)      This is a coding task. Include: specific function/class names,\n            input/output types, error handling approach, and key logic per step.",
+        TaskType.WRITING: "(WRITING)   This is a writing task. Include: section names, target length,\n            key points per section, and tone.",
+        TaskType.REASONING: "(REASONING) This is a reasoning/analysis task. Include: each logical step,\n            what conclusion it reaches, and what it passes to the next step.",
+        TaskType.GENERAL: "(GENERAL)   Structure steps as concrete actions with clear inputs and outputs.",
     }
 
     hint = task_hint.get(task_type, task_hint[TaskType.GENERAL])
 
-    return f"""You are a planning agent. Create a clear, structured, step-by-step plan for the given task.
+    return f"""You are a task planner. Create a structured, step-by-step implementation plan
+for the given task. Your plan will be executed by a model that follows
+instructions literally — be explicit, not suggestive.
+
+## RULES:
+1. Number every step. Start from 1.
+2. Each step is ONE concrete action. Not a category. Not a phase. One action.
+   BAD: "Step 3: Handle authentication"
+   GOOD: "Step 3: Create a function validate_token(token: str) that checks
+          the token against the database and returns the user ID if valid,
+          or raises an InvalidTokenError if not."
+3. Each step must state what it takes as input and what it produces as output.
+4. Do NOT use vague language: "appropriate", "as needed", "handle properly",
+   "best practices". State the specific action.
+5. Do NOT add requirements the user did not ask for.
+6. End with a deliverables checklist — a bulleted list of every artifact
+   the executor must produce to consider the task complete.
 
 {hint}
 
-## Rules:
-1. Number every step
-2. Each step should be a concrete action, not a vague instruction
-3. Include what inputs each step needs and what it produces
-4. End with a short checklist of deliverables
-
-Return ONLY the plan. No preamble, no commentary."""
+## OUTPUT FORMAT:
+Return ONLY the plan. No preamble. No "Here is my plan:". Start with Step 1."""
 
 
-def generate_cheap_plan(prompt: str, task_type: TaskType) -> dict:
+def generate_cheap_plan(prompt: str, task_type: TaskType, request_id: str | None = None) -> dict:
     """Generate a structured step-by-step plan.
 
     Uses the MEDIUM_REASONING model to produce a plan with
@@ -71,6 +82,7 @@ def generate_cheap_plan(prompt: str, task_type: TaskType) -> dict:
     Args:
         prompt:    The optimized (or original) prompt to plan for.
         task_type: The detected task type (CODE, WRITING, etc.).
+        request_id: Optional request ID for logging.
 
     Returns:
         A dict with keys:
@@ -92,6 +104,8 @@ def generate_cheap_plan(prompt: str, task_type: TaskType) -> dict:
             role=ModelRole.MEDIUM_REASONING,
             messages=messages,
             temperature=0.3,
+            request_id=request_id,
+            step_name="cheap_planner",
         )
 
         plan_text = result["content"].strip()

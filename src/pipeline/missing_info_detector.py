@@ -25,39 +25,75 @@ from src.providers import call_llm
 # ── Constants ────────────────────────────────────────────────
 _MAX_ROUNDS: int = 3
 
-_SYSTEM_PROMPT: str = """You are an expert requirements analyst. Your job is to determine if a user's prompt contains enough information to be executed properly.
+_SYSTEM_PROMPT: str = """You are a requirements completeness checker. Your only job is to determine
+whether a prompt has enough information to be executed by a competent developer
+or AI model WITHOUT asking any clarifying questions.
 
-Analyze the prompt and identify any missing, ambiguous, or unclear information that would prevent a developer or AI from executing the task correctly.
+## THE ONLY QUESTION YOU MUST ANSWER:
+"Could a competent developer start working on this task RIGHT NOW and produce
+something correct?" If YES → is_complete: true. If NO → is_complete: false.
 
-## Examples of what counts as missing info:
+## WHEN TO FLAG AS INCOMPLETE (missing_info must be critical, not optional):
+- No language/runtime specified AND the choice fundamentally changes the solution
+  (e.g., "implement a login system" with no language → flag)
+- No context given when context is literally required to do the task
+  (e.g., "fix my code" with no code attached → flag)
+- The task contradicts itself or is logically impossible as stated
+- Two equally valid interpretations exist that produce COMPLETELY different outputs
 
-- "Implement a login system" -> MISSING: Which programming language? Which framework? Which database for storing credentials? Should it include OAuth or just email/password?
-- "Fix my code" -> MISSING: What is the code? What is wrong with it? What is the expected behavior? What language is it in?
-- "Build me a REST API" -> MISSING: What resources/endpoints? Which language/framework? What authentication method? What database?
+## WHEN NOT TO FLAG (do NOT invent missing info):
+- A reasonable default exists for the missing detail → NOT missing
+  (e.g., "write a REST API" → assume JSON, HTTP, standard conventions → complete)
+- The detail is a style preference, not a functional requirement → NOT missing
+  (e.g., "use tabs or spaces?" → not missing)
+- The user is asking a knowledge question → always complete
+  (e.g., "Explain how TCP/IP works" → complete)
+- The user wants general creative work → almost always complete
+  (e.g., "Write an essay about AI" → complete)
+- More specificity would be NICE but is not REQUIRED to start → NOT missing
 
-## Examples of prompts that ARE complete enough:
+## ABSOLUTE RULES:
+1. DO NOT flag something as missing just because you personally want more detail.
+2. DO NOT flag something as missing if a competent developer would make a
+   reasonable assumption and proceed.
+3. If you are uncertain whether to flag → DO NOT flag. Err toward is_complete: true.
+4. ACCEPT NEGATIVE CONSTRAINTS: If a user answers a clarification question with 'no', 'none', 'not needed', or 'no specification', you MUST treat that missing information as RESOLVED and SATISFIED. Do not ask the user for that specific information again in subsequent rounds.
+5. follow_up_questions must be SPECIFIC and ANSWERABLE, not vague.
+   BAD: "What technology stack do you want to use?"
+   GOOD: "What programming language should the login system be written in?"
 
-- "Write an essay about AI" -> This is complete enough. The user wants a general essay, no specifics are strictly required.
-- "Explain how TCP/IP works" -> This is complete enough. It is a knowledge question with a clear scope.
-- "Write a Python function that reverses a string" -> This is complete enough. Language, task, and scope are all clear.
-
-## Rules:
-1. Do NOT flag prompts as incomplete just because they could have MORE detail. Only flag genuinely ambiguous or missing critical information.
-2. Be practical — if a reasonable default exists, the info is not "missing".
-3. Return your analysis as a JSON object with EXACTLY this structure (no markdown, no backticks, just raw JSON):
+## OUTPUT FORMAT — STRICT:
+Return ONLY a raw JSON object. No markdown. No backticks. No explanation.
+No text before or after the JSON. The JSON must match this schema exactly:
 
 {
-    "is_complete": true/false,
-    "missing_info": ["list of specific things that are unclear or missing"],
-    "follow_up_questions": ["exact questions to ask the user to fill in the gaps"]
+    "is_complete": true or false,
+    "missing_info": ["specific thing that is unclear"],
+    "follow_up_questions": ["exact question to ask the user"]
 }
 
-If the prompt is complete, return:
-{
-    "is_complete": true,
-    "missing_info": [],
-    "follow_up_questions": []
-}"""
+If is_complete is true, missing_info and follow_up_questions MUST be empty arrays [].
+If is_complete is false, both arrays MUST have at least one item each.
+
+---
+### EXAMPLES OF HANDLING NEGATIVE ANSWERS
+If a user answers a question indicating they don't care, have no preference, or want to skip it, you MUST treat that requirement as completely satisfied. Do NOT ask about it again.
+
+Example 1:
+Q: What database system should be used?
+User Answer: none
+Your Action: Treat the database requirement as SATISFIED. Do not ask about a database again.
+
+Example 2:
+Q: Should the system use OAuth or OpenID Connect?
+User Answer: no specification
+Your Action: Treat the authentication protocol requirement as SATISFIED. Do not ask about authentication protocols again.
+
+Example 3:
+Q: What password hashing algorithm should be used?
+User Answer: doesn't matter
+Your Action: Treat the hashing algorithm requirement as SATISFIED. Do not ask about algorithms again.
+---"""
 
 
 # ── Safe fallback when LLM returns bad JSON ─────────────────
@@ -120,7 +156,7 @@ def _parse_llm_json(raw_text: str) -> dict:
         return _SAFE_FALLBACK.copy()
 
 
-def detect_missing_info(user_prompt: str) -> dict:
+def detect_missing_info(user_prompt: str, request_id: str | None = None) -> dict:
     """Analyze a user prompt for missing or ambiguous information.
 
     Sends the prompt to a LOW_REASONING model with a specialized system
@@ -128,6 +164,7 @@ def detect_missing_info(user_prompt: str) -> dict:
 
     Args:
         user_prompt: The raw prompt submitted by the user.
+        request_id:  Optional request ID for benchmark logging.
 
     Returns:
         A dict with keys:
@@ -147,7 +184,9 @@ def detect_missing_info(user_prompt: str) -> dict:
         result = call_llm(
             role=ModelRole.MEDIUM_REASONING,
             messages=messages,
-            temperature=0.3,  # low temp for structured output
+            temperature=0.1,
+            request_id=request_id,
+            step_name="missing_info_detector",
         )
         return _parse_llm_json(result["content"])
 
@@ -158,7 +197,7 @@ def detect_missing_info(user_prompt: str) -> dict:
         return _SAFE_FALLBACK.copy()
 
 
-def run_missing_info_loop(user_prompt: str) -> str:
+def run_missing_info_loop(user_prompt: str, request_id: str | None = None) -> str:
     """Interactively resolve missing information in a user prompt.
 
     Calls detect_missing_info in a loop. If the prompt is incomplete,
@@ -169,6 +208,7 @@ def run_missing_info_loop(user_prompt: str) -> str:
 
     Args:
         user_prompt: The raw prompt submitted by the user.
+        request_id:  Optional request ID for logging.
 
     Returns:
         The original prompt (if already complete) or an enriched version
@@ -179,7 +219,7 @@ def run_missing_info_loop(user_prompt: str) -> str:
     for round_num in range(1, _MAX_ROUNDS + 1):
         print(f"\n--- Missing Info Check (round {round_num}/{_MAX_ROUNDS}) ---")
 
-        analysis = detect_missing_info(current_prompt)
+        analysis = detect_missing_info(current_prompt, request_id=request_id)
 
         if analysis["is_complete"]:
             print("  Prompt is complete. No missing information detected.")
@@ -198,11 +238,12 @@ def run_missing_info_loop(user_prompt: str) -> str:
 
         print("\n  Please answer the following questions:\n")
         answers: list[str] = []
+        skip_phrases = {"no specification", "none", "no", "doesn't matter", "not needed", "skip", "na", "n/a"}
 
         for i, question in enumerate(analysis["follow_up_questions"], start=1):
             print(f"  Q{i}: {question}")
             answer = input(f"  A{i}: ").strip()
-            if answer:
+            if answer and answer.lower() not in skip_phrases:
                 answers.append(f"Q: {question}\nA: {answer}")
 
         # ── Append answers as additional context ─────────────

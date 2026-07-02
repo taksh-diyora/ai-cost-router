@@ -29,6 +29,7 @@ def get_plan(
     complexity: ComplexityLevel,
     task_type: TaskType,
     user_choice: VerificationChoice,
+    request_id: str | None = None,
 ) -> dict:
     """Route to the appropriate planner based on complexity and user choice.
 
@@ -41,6 +42,7 @@ def get_plan(
         complexity:  The classified complexity level.
         task_type:   The detected task type (CODE, WRITING, etc.).
         user_choice: The user's verification choice.
+        request_id:  Optional request ID for logging.
 
     Returns:
         A dict with the plan result plus a "planner_used" key
@@ -53,11 +55,11 @@ def get_plan(
 
     if use_opus:
         print("  [Planner] Using OPUS planner (HIGH_REASONING) for complex task.")
-        result = generate_opus_plan(prompt, task_type)
+        result = generate_opus_plan(prompt, task_type, request_id=request_id)
         result["planner_used"] = "opus"
     else:
         print("  [Planner] Using CHEAP planner (MEDIUM_REASONING).")
-        result = generate_cheap_plan(prompt, task_type)
+        result = generate_cheap_plan(prompt, task_type, request_id=request_id)
         result["planner_used"] = "cheap"
 
     return result

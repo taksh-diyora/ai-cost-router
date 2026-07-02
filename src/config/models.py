@@ -57,7 +57,7 @@ MODELS: dict[ModelRole, ModelConfig] = {
     ),
     ModelRole.MEDIUM_REASONING: ModelConfig(
         provider="groq",
-        model_id="openai/gpt-oss-120b",
+        model_id="llama-3.3-70b-versatile",
         cost_per_1k_input=0.0,
         cost_per_1k_output=0.0,
     ),

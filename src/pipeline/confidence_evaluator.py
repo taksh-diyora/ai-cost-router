@@ -43,7 +43,8 @@ _CODE_KEYWORDS: list[str] = [
     "code", "function", "implement", "bug", "debug", "script",
     "class", "api", "database", "algorithm", "compile", "syntax",
     "import", "library", "module", "endpoint", "backend", "frontend",
-    "refactor", "test case", "unit test",
+    "refactor", "test case", "unit test", "python", "django",
+    "architecture", "build", "program",
 ]
 
 _WRITING_KEYWORDS: list[str] = [
@@ -201,6 +202,7 @@ def evaluate_confidence(
     optimized_prompt: str,
     task_type: TaskType,
     threshold: float = DEFAULT_THRESHOLD,
+    request_id: str | None = None,
 ) -> dict:
     """Score how well the optimized prompt preserves the original intent.
 
@@ -212,7 +214,8 @@ def evaluate_confidence(
         original_prompt:  The user's original prompt.
         optimized_prompt: The rewritten prompt from Layer 1.
         task_type:        Detected task type (determines scoring weights).
-        threshold:        Minimum passing score (default 85).
+        threshold:        Score out of 100 needed to pass.
+        request_id:       Optional request ID for logging.
 
     Returns:
         A dict with keys:
@@ -233,36 +236,86 @@ def evaluate_confidence(
         for name, weight in weights.items()
     )
 
-    system_prompt = f"""You are a strict quality evaluator. Your job is to compare an optimized prompt against the original and score how well the optimization preserved the user's intent.
+    system_prompt = f"""You are a strict quality auditor. You compare an optimized prompt against the
+original and produce a precise confidence score. You are not rewarding effort —
+you are measuring accuracy.
 
-Task type: {task_type.value.upper()}
+Task type detected: {task_type.name}
 
-## Scoring Criteria (score each 0-100):
+IMPORTANT: The "Original Prompt" below is the user's TRUE original request. It never changes between iterations. You are always scoring how well the optimized version matches THIS original — not any previous iteration's output.
+
+## SCORING CRITERIA FOR THIS TASK TYPE:
 {criteria_description}
 
-## Scoring Guidelines:
-- intent_preserved: Does the optimized prompt do EXACTLY what the user asked? Penalize if the core request was changed.
-- completeness: Are ALL requirements from the original covered in the optimized version?
-- no_hallucinated_requirements: Are there any new requirements in the optimized version that the user NEVER asked for? Score 100 if none, lower if extras exist.
-- key_points_covered: For writing tasks, are all main points the user mentioned present?
-- tone_appropriate: Does the optimized prompt maintain the right tone and style?
-- logical_structure: Is the reasoning flow preserved and well-organized?
-- clarity_improved: Is the optimized version genuinely clearer than the original?
+## HOW TO SCORE EACH CRITERION (be strict — DO NOT round up):
 
-## Instructions:
-1. Read the original prompt carefully
-2. Read the optimized prompt carefully
-3. Score each criterion listed above from 0 to 100
-4. List any tasks from the ORIGINAL that are MISSING in the optimized version
-5. List any NEW tasks in the optimized version that were NOT in the original
-6. Return ONLY valid JSON in this exact format (no markdown, no backticks, just raw JSON):
+intent_preserved:
+  100 = The optimized prompt requests EXACTLY what the original requested.
+  70  = Minor wording change but same meaning.
+  40  = Some drift — a requirement was reinterpreted or reframed.
+  0   = The core request was changed into something different.
+
+completeness:
+  100 = Every single requirement from the original is present in the optimized version.
+  70  = One minor requirement is missing.
+  40  = A significant requirement is missing.
+  0   = Multiple requirements are missing.
+
+no_hallucinated_requirements:
+  100 = The optimized prompt contains ONLY what the user asked for.
+  70  = One minor extra detail was added (low impact).
+  40  = One significant extra requirement was added.
+  0   = Multiple requirements were invented.
+
+key_points_covered (writing tasks):
+  100 = Every point the user mentioned is addressed.
+  50  = At least half the points are addressed.
+  0   = Most points are missing.
+
+tone_appropriate (writing tasks):
+  100 = The tone and style requested are clearly specified and correct.
+  50  = Tone is partially specified or subtly wrong.
+  0   = Wrong tone or no tone guidance when user specified one.
+
+logical_structure (reasoning tasks):
+  100 = Reasoning flow is clear, ordered, and matches the original structure.
+  50  = Some structural drift.
+  0   = Structure was completely changed.
+
+clarity_improved (general tasks):
+  100 = Objectively clearer than original with no scope change.
+  50  = Marginally clearer.
+  0   = Same or worse clarity, or clarity was gained by changing scope.
+
+## CALCULATING THE WEIGHTED FINAL SCORE:
+Multiply each criterion score by its weight percentage, sum the results.
+
+## IDENTIFYING MISSING AND EXTRA TASKS:
+RUTHLESS SCOPE CHECKING: You must aggressively penalize the optimized prompt if it contains ANY features, behaviors, or 'best practices' (like error handling or edge cases) that are not present in the Original Prompt text or the attached Q&A context.
+If you detect these unrequested additions, you MUST deduct points and list them explicitly in the `extra_tasks` output list so the optimizer can remove them in the next iteration. A score of 100 is ONLY permitted if the scope is an exact 1:1 match.
+
+missing_tasks: List SPECIFIC requirements from the ORIGINAL that do NOT appear
+  in the optimized version. Be precise. Quote the requirement.
+  DO NOT list things that are implied or handled by the optimized version.
+  Only list things that are genuinely absent.
+
+extra_tasks: List SPECIFIC requirements in the OPTIMIZED version that have NO
+  basis in the original. Be precise. Do not list clarifications of existing
+  requirements — only list genuinely new requirements that were invented.
+
+## OUTPUT FORMAT — STRICT:
+Return ONLY a raw JSON object. No markdown. No backticks. No text before or after.
 
 {{
     "scores": {{{", ".join(f'"{c}": <0-100>' for c in criteria)}}},
-    "missing_tasks": ["task that was lost", "another missing task"],
-    "extra_tasks": ["task that was added", "another extra task"],
-    "reasoning": "one sentence explaining the overall evaluation"
-}}"""
+    "missing_tasks": ["exact description of missing requirement"],
+    "extra_tasks": ["exact description of added requirement that was not requested"],
+    "reasoning": "One sentence. State the single most important finding."
+}}
+
+If there are no missing tasks, missing_tasks must be [].
+If there are no extra tasks, extra_tasks must be [].
+DO NOT fabricate missing or extra tasks to fill the arrays."""
 
     user_message = f"""## Original Prompt:
 {original_prompt}
@@ -281,7 +334,9 @@ Evaluate the optimization quality. Return ONLY the JSON object."""
         result = call_llm(
             role=ModelRole.MEDIUM_REASONING,
             messages=messages,
-            temperature=0.2,  # low temp for consistent scoring
+            temperature=0.0,
+            request_id=request_id,
+            step_name="layer2_evaluator",
         )
 
         parsed = _parse_evaluation_json(result["content"], criteria)
